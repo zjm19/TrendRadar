@@ -1,0 +1,41 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    # 每周一早上8点检查一次更新
+    - cron: '0 8 * * 1'
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout your repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config --global user.name 'GitHub Action'
+          git config --global user.email 'action@github.com'
+
+      - name: Add upstream and fetch
+        run: |
+          git remote add upstream https://github.com/sansan0/TrendRadar.git
+          git fetch upstream
+
+      - name: Merge upstream changes
+        run: |
+          git checkout main
+          # 尝试合并，忽略 config/ 目录的冲突（保留你的配置）
+          git merge upstream/main --strategy-option=theirs || true
+          
+          # 恢复你的自定义配置（如果有）
+          git checkout HEAD -- config/frequency_words.txt config/config.yaml || true
+          
+          # 提交合并
+          git add .
+          git commit -m "Sync upstream updates $(date +%Y-%m-%d)" || echo "No changes to commit"
+          git push origin main
