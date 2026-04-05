@@ -1,10 +1,18 @@
-name: Sync Upstream
+name: Sync Upstream (每两月同步)
 
 on:
   schedule:
-    # 每周一早上8点检查一次更新
-    - cron: '0 8 * * 1'
-  workflow_dispatch:  # 支持手动触发
+    # 每两个月的1号凌晨3点执行（避免月初高峰）
+    # 格式：分 时 日 月 周
+    # */2 表示间隔2个月（1月、3月、5月、7月、9月、11月）
+    - cron: "0 3 1 */2 *"
+  
+  # 保留手动触发入口，方便随时强制同步
+  workflow_dispatch:
+
+# 关键权限：允许写入仓库内容以推送合并结果
+permissions:
+  contents: write
 
 jobs:
   sync:
@@ -13,7 +21,7 @@ jobs:
       - name: Checkout your repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # 需要完整历史以便合并
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
@@ -21,21 +29,35 @@ jobs:
           git config --global user.name 'GitHub Action'
           git config --global user.email 'action@github.com'
 
-      - name: Add upstream and fetch
+      - name: Add upstream and fetch updates
         run: |
-          git remote add upstream https://github.com/sansan0/TrendRadar.git
+          git remote add upstream https://github.com/sansan0/TrendRadar.git || true
           git fetch upstream
 
-      - name: Merge upstream changes
+      - name: Merge upstream changes (protecting your configs)
         run: |
           git checkout main
-          # 尝试合并，忽略 config/ 目录的冲突（保留你的配置）
-          git merge upstream/main --strategy-option=theirs || true
           
-          # 恢复你的自定义配置（如果有）
-          git checkout HEAD -- config/frequency_words.txt config/config.yaml || true
+          # 备份你的自定义配置（临时存储）
+          cp config/frequency_words.txt /tmp/my_words.txt
+          cp config/config.yaml /tmp/my_config.yaml
           
-          # 提交合并
-          git add .
-          git commit -m "Sync upstream updates $(date +%Y-%m-%d)" || echo "No changes to commit"
+          # 尝试合并上游更新（优先采用上游代码解决冲突）
+          git merge upstream/main --strategy-option=theirs -m "Sync upstream $(date +%Y-%m)" || {
+            echo "⚠️ 合并出现冲突，尝试恢复自定义配置..."
+            git reset --hard HEAD
+            git merge upstream/main -X theirs --allow-unrelated-histories -m "Sync upstream $(date +%Y-%m)"
+          }
+          
+          # 恢复你的自定义配置（覆盖上游的默认配置）
+          mv /tmp/my_words.txt config/frequency_words.txt
+          mv /tmp/my_config.yaml config/config.yaml
+          
+          # 提交更改
+          git add config/
+          git commit -m "Sync upstream updates $(date +%Y-%m) - keep custom configs" || echo "No changes to commit"
+
+      - name: Push to your repository
+        run: |
           git push origin main
+          echo "✅ 同步完成：已合并上游更新并保留你的配置"
